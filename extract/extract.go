@@ -60,6 +60,11 @@ type Opts struct {
 	// AllowEmptySBVar allows the SecureBoot variable to be empty in addition to length 1 (0 or 1).
 	// This can be used when the SecureBoot variable is not initialized.
 	AllowEmptySBVar bool
+	// AllowEFIAppBeforeCallingEvent skips a check that requires
+	// EV_EFI_BOOT_SERVICES_APPLICATION to occur after a
+	// "Calling EFI Application from Boot Option". This option is useful when
+	// the host platform loads EFI Applications unrelated to OS boot.
+	AllowEFIAppBeforeCallingEvent bool
 }
 
 // FirmwareLogState extracts event info from a verified TCG PC Client event
@@ -88,7 +93,7 @@ func FirmwareLogState(events []tcg.Event, hash crypto.Hash, registerCfg register
 	if err != nil {
 		joined = errors.Join(joined, err)
 	}
-	efiState, err := EfiState(hash, events, registerCfg)
+	efiState, err := EfiState(hash, events, registerCfg, opts)
 
 	if err != nil {
 		joined = errors.Join(joined, err)
@@ -343,7 +348,7 @@ func PlatformState(hash crypto.Hash, events []tcg.Event) (*pb.PlatformState, err
 
 // EfiState extracts EFI app information from a UEFI TCG2 firmware
 // event log.
-func EfiState(hash crypto.Hash, events []tcg.Event, registerCfg registerConfig) (*pb.EfiState, error) {
+func EfiState(hash crypto.Hash, events []tcg.Event, registerCfg registerConfig, opts Opts) (*pb.EfiState, error) {
 	// We pre-compute various event digests, and check if those event type have
 	// been modified. We only trust events that come before the
 	// ExitBootServices() request.
@@ -393,7 +398,7 @@ func EfiState(hash crypto.Hash, events []tcg.Event, registerCfg registerConfig) 
 			}
 
 			if evtType == tcg.EFIBootServicesApplication {
-				if !seenCallingEfiApp {
+				if !opts.AllowEFIAppBeforeCallingEvent && !seenCallingEfiApp {
 					return nil, fmt.Errorf("found EFIBootServicesApplication in %s%d before CallingEFIApp event", registerCfg.Name, index)
 				}
 				efiAppStates = append(efiAppStates, &pb.EfiApp{Digest: event.ReplayedDigest()})
