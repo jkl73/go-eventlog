@@ -383,6 +383,7 @@ func TestEfiState(t *testing.T) {
 		registserConfig registerConfig
 		wantPass        bool
 		wantEfiState    *pb.EfiState
+		opts            Opts
 	}{
 		{
 			name: "success with TPM logs",
@@ -400,6 +401,9 @@ func TestEfiState(t *testing.T) {
 						Digest: []byte("^\x8c\xb7Z\xcd\xf8\xe0\x9e_\xc1L\xc2\xd6\xce\x0c\"\x88\xaf \x89v\xd9s\t\x85\x1cf\x1e\x91\xec\x1e\x03"),
 					},
 				},
+			},
+			opts: Opts{
+				AllowEFIAppBeforeCallingEvent: false,
 			},
 		},
 		{
@@ -419,6 +423,9 @@ func TestEfiState(t *testing.T) {
 					},
 				},
 			},
+			opts: Opts{
+				AllowEFIAppBeforeCallingEvent: false,
+			},
 		},
 		{
 			name: "nil EFI state with missing ExitBootServicesInvocation event in TPM logs",
@@ -436,6 +443,9 @@ func TestEfiState(t *testing.T) {
 			registserConfig: TPMRegisterConfig,
 			wantPass:        true,
 			wantEfiState:    nil,
+			opts: Opts{
+				AllowEFIAppBeforeCallingEvent: false,
+			},
 		},
 		{
 			name: "failed with missing CallingEFIApp event in TPM logs",
@@ -453,6 +463,9 @@ func TestEfiState(t *testing.T) {
 			registserConfig: TPMRegisterConfig,
 			wantPass:        false,
 			wantEfiState:    nil,
+			opts: Opts{
+				AllowEFIAppBeforeCallingEvent: false,
+			},
 		},
 		{
 			name: "failed with multiple separators in TPM logs",
@@ -466,6 +479,9 @@ func TestEfiState(t *testing.T) {
 			registserConfig: TPMRegisterConfig,
 			wantPass:        false,
 			wantEfiState:    nil,
+			opts: Opts{
+				AllowEFIAppBeforeCallingEvent: false,
+			},
 		},
 		{
 			name: "failed with bad data in TPM logs",
@@ -483,12 +499,15 @@ func TestEfiState(t *testing.T) {
 			registserConfig: TPMRegisterConfig,
 			wantPass:        false,
 			wantEfiState:    nil,
+			opts: Opts{
+				AllowEFIAppBeforeCallingEvent: false,
+			},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			hash, events := tc.events()
-			efiState, err := EfiState(hash, events, tc.registserConfig)
+			efiState, err := EfiState(hash, events, tc.registserConfig, tc.opts)
 			if gotPass := (err == nil); gotPass != tc.wantPass {
 				t.Errorf("EfiState returned unexpected result, gotPass %v, but want %v", gotPass, tc.wantPass)
 			}

@@ -38,12 +38,6 @@ type eventLog struct {
 	ExpectedEFIAppDigests map[pb.HashAlgo][]string
 }
 
-// The Arch Linux event log has two known failures due to our parser's strict checks.
-var archLinuxKnownParsingFailures = []string{
-	"SecureBoot data len is 0, expected 1",
-	"found EFIBootServicesApplication in PCR4 before CallingEFIApp event",
-}
-
 // Agile Event Log from a RHEL 8 GCE instance with Secure Boot enabled
 var Rhel8GCE = eventLog{
 	RawLog: testdata.Rhel8EventLog,
@@ -555,31 +549,59 @@ var COS121AmdSev = eventLog{
 	},
 }
 
+var GdcHost = eventLog{
+	RawLog: testdata.GdcHost,
+	Banks: []register.PCRBank{
+		testutil.MakePCRBank(pb.HashAlgo_SHA256, map[uint32][]byte{
+			0:  decodeHex("dab77c454bd12c27ff6b6ce1f9adca90b7a330c1cef0b5cd01cb89fb3bd0dffa"),
+			1:  decodeHex("e9c706539943b2d9770715914f9b3946fab0265327bace4c479913acb9014051"),
+			2:  decodeHex("7fde57284c6a0eabdc9b829db4e2ab0bb565c4189410de2474dd116bc18bafcc"),
+			3:  decodeHex("3d458cfe55cc03ea1f443f1562beec8df51c75e14a9fcf9a7234a13f198e7969"),
+			4:  decodeHex("ded8b5d91a09c328b9859d8c9db5a346f1065224616b0ba66d6c83dba2b465e8"),
+			5:  decodeHex("163ee251955b844012f1493aa962b2a18acbec194ea4856cdc45cd54c8540058"),
+			6:  decodeHex("3d458cfe55cc03ea1f443f1562beec8df51c75e14a9fcf9a7234a13f198e7969"),
+			7:  decodeHex("2c9252609eda09899d96abe16b947d0e736c43271997c1fa5189e9bcd37ba516"),
+			8:  decodeHex("8edecd4daa5194ea70a2a9f2c71c7c816bd3b1e0a1ca6f4abea7306250191eba"),
+			9:  decodeHex("731d336f9f3255e80b429de54fb77b2ad5e485829eb386d661c668245f30f44b"),
+			14: decodeHex("306f9d8b94f17d93dc6e7cf8f5c79d652eb4c6c4d13de2dddc24af416e13ecaf"),
+		}),
+	},
+	ExpectedEFIAppDigests: map[pb.HashAlgo][]string{
+		pb.HashAlgo_SHA256: {
+			"c7ac5d44444affd8d4a7c5d3dea0ce20a71e05812fc18777a428d092f78ae3ff",
+			"c5d3b47de11a9a2a4a15ef5cb7202d7800a10609c0dcecc46e3e963d476b76ce",
+			"af4161084115c9d5c1872f4473fe974b535e3a9a767688293720ac2cc6f7f9a3",
+			"af4161084115c9d5c1872f4473fe974b535e3a9a767688293720ac2cc6f7f9a3",
+		},
+	},
+}
+
 func TestParseEventLogs(t *testing.T) {
 	sbatErrorStr := "asn1: structure error: tags don't match (16 vs {class:0 tag:24 length:10 isCompound:true})"
 	logs := []struct {
 		eventLog
 		name string
-		extract.Bootloader
+		extract.Opts
 		// This field handles known issues with event log parsing or bad event
 		// logs.
 		// Set to nil when the event log has no known issues.
 		knownErrs []string
 	}{
-		{Debian10GCE, "Debian10GCE", extract.UnsupportedLoader, nil},
-		{Rhel8GCE, "Rhel8GCE", extract.GRUB, nil},
-		{UbuntuAmdSevGCE, "UbuntuAmdSevGCE", extract.GRUB, nil},
+		{Debian10GCE, "Debian10GCE", extract.Opts{Loader: extract.UnsupportedLoader}, nil},
+		{Rhel8GCE, "Rhel8GCE", extract.Opts{Loader: extract.GRUB}, nil},
+		{UbuntuAmdSevGCE, "UbuntuAmdSevGCE", extract.Opts{Loader: extract.GRUB}, nil},
 		// TODO: remove once the fix is pulled in
 		// https://github.com/google/go-attestation/pull/222
-		{Ubuntu2104NoDbxGCE, "Ubuntu2104NoDbxGCE", extract.GRUB, []string{sbatErrorStr}},
-		{Ubuntu2104NoSecureBootGCE, "Ubuntu2104NoSecureBootGCE", extract.GRUB, []string{sbatErrorStr}},
-		{Ubuntu2404AmdSevSnp, "Ubuntu2404AmdSevSnp", extract.GRUB, nil},
+		{Ubuntu2104NoDbxGCE, "Ubuntu2104NoDbxGCE", extract.Opts{Loader: extract.GRUB}, []string{sbatErrorStr}},
+		{Ubuntu2104NoSecureBootGCE, "Ubuntu2104NoSecureBootGCE", extract.Opts{Loader: extract.GRUB}, []string{sbatErrorStr}},
+		{Ubuntu2404AmdSevSnp, "Ubuntu2404AmdSevSnp", extract.Opts{Loader: extract.GRUB}, nil},
 		// This event log has a SecureBoot variable length of 0.
-		{ArchLinuxWorkstation, "ArchLinuxWorkstation", extract.UnsupportedLoader, archLinuxKnownParsingFailures},
-		{COS85AmdSev, "COS85AmdSev", extract.GRUB, nil},
-		{COS93AmdSev, "COS93AmdSev", extract.GRUB, nil},
-		{COS101AmdSev, "COS101AmdSev", extract.GRUB, nil},
-		{COS121AmdSev, "COS121AmdSev", extract.GRUB, nil},
+		{ArchLinuxWorkstation, "ArchLinuxWorkstation", extract.Opts{Loader: extract.UnsupportedLoader, AllowEFIAppBeforeCallingEvent: true, AllowEmptySBVar: true}, nil},
+		{COS85AmdSev, "COS85AmdSev", extract.Opts{Loader: extract.GRUB}, nil},
+		{COS93AmdSev, "COS93AmdSev", extract.Opts{Loader: extract.GRUB}, nil},
+		{COS101AmdSev, "COS101AmdSev", extract.Opts{Loader: extract.GRUB}, nil},
+		{COS121AmdSev, "COS121AmdSev", extract.Opts{Loader: extract.GRUB}, nil},
+		{GdcHost, "GdcHost", extract.Opts{Loader: extract.GRUB, AllowEFIAppBeforeCallingEvent: true}, []string{"invalid SCRTM version event for PCR0"}},
 	}
 
 	for _, log := range logs {
@@ -588,7 +610,7 @@ func TestParseEventLogs(t *testing.T) {
 			hashName := pb.HashAlgo_name[int32(bank.TCGHashAlgo)]
 			subtestName := fmt.Sprintf("%s-%s", log.name, hashName)
 			t.Run(subtestName, func(t *testing.T) {
-				if _, err := ReplayAndExtract(rawLog, bank, extract.Opts{Loader: log.Bootloader}); err != nil {
+				if _, err := ReplayAndExtract(rawLog, bank, log.Opts); err != nil {
 					matched := false
 					for _, knownErr := range log.knownErrs {
 						if strings.Contains(err.Error(), knownErr) {
@@ -602,6 +624,25 @@ func TestParseEventLogs(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestParseEventLogCallingEFIAppError(t *testing.T) {
+	tests := []struct {
+		eventLog
+		name string
+	}{
+		{ArchLinuxWorkstation, "ArchLinuxWorkstation"},
+		{GdcHost, "GdcHost"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, bank := range test.Banks {
+				if _, err := ReplayAndExtract(test.RawLog, bank, extract.Opts{AllowEFIAppBeforeCallingEvent: false}); err == nil || !strings.Contains(err.Error(), "before CallingEFIApp event") {
+					t.Errorf("ReplayAndExtract(%s): expected Calling EFI App error, received %v", test.name, err)
+				}
+			}
+		})
 	}
 }
 
