@@ -273,9 +273,10 @@ func (e *EventLog) Events(hash register.HashAlg) []Event {
 	var events []Event
 	for _, re := range e.rawEvents {
 		ev := Event{
-			Index: re.index,
-			Type:  re.typ,
-			Data:  re.data,
+			Index:    re.index,
+			Type:     re.typ,
+			Data:     re.data,
+			sequence: re.sequence,
 		}
 
 		for _, digest := range re.digests {
