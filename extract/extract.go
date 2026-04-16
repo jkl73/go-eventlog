@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 
+	gmes "github.com/google/go-eventlog/extract/gmes"
 	pb "github.com/google/go-eventlog/proto/state"
 	"github.com/google/go-eventlog/tcg"
 	"github.com/google/go-eventlog/wellknown"
@@ -513,4 +514,113 @@ func getGrubKernelCmdlineSuffix(grubCmd []byte) int {
 		}
 	}
 	return -1
+}
+
+// GMESState extracts Google Measurement Event Structure (GMES) information from a TCG event log.
+func GMESState(hash crypto.Hash, events []tcg.Event) (*pb.GMESState, error) {
+	state := &pb.GMESState{}
+	seenSeparators := map[uint32]bool{
+		gmes.PCRConfig.BMCFirmwareIdx: false,
+		gmes.PCRConfig.MBMIdx:         false,
+		gmes.PCRConfig.BIOSIdx:        false,
+		gmes.PCRConfig.HostKernelIdx:  false,
+	}
+
+	for _, event := range events {
+		eventType, err := tcg.UntrustedParseEventType(uint32(event.UntrustedType()))
+		if err != nil {
+			return nil, err
+		}
+
+		// Handle separator types.
+		if eventType == tcg.Separator {
+			seen, ok := seenSeparators[event.MRIndex()]
+			if !ok { // Skip if not a GMES index.
+				continue
+			}
+
+			if seen {
+				return nil, fmt.Errorf("duplicate separator event at MR%d", event.MRIndex())
+			}
+
+			separatorInfo := getSeparatorInfo(hash)
+			isSeparator, err := checkIfValidSeparator(event, separatorInfo)
+			if err != nil {
+				return nil, fmt.Errorf("error checking for valid separator: %v", err)
+			}
+
+			if !isSeparator {
+				return nil, fmt.Errorf("event contains separator type but not separator content %d", event.Num())
+			}
+
+			seenSeparators[event.MRIndex()] = true
+			continue
+		}
+
+		if seen, ok := seenSeparators[event.MRIndex()]; ok && seen {
+			// Don't trust any events for the index after separator.
+			continue
+		}
+
+		if eventType != tcg.EventTag {
+			// Ignore non-Tag events since GMES events are expected to be in Tag format.
+			continue
+		}
+
+		// Verify event digest matches event data.
+		if err := DigestEquals(event, event.RawData()); err != nil {
+			return nil, fmt.Errorf("invalid digest at event %d: %v", event.Num(), err)
+		}
+
+		// Parse PCCClient Tagged Event from event data.
+		taggedEvent, err := tcg.ParseTaggedEventData(event.RawData())
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse PCCClient Tagged Event at event %d: %v", event.Num(), err)
+		}
+
+		if taggedEvent.ID != gmes.EventID {
+			return nil, fmt.Errorf("unexpected event ID at event %d: %v", event.Num(), taggedEvent.ID)
+		}
+
+		// Parse Google Measurement Event Structure.
+		gmesEvent, err := gmes.ParseEvent(taggedEvent.Data)
+		if err != nil {
+			return nil, err
+		}
+
+		registerCfg := gmes.PCRConfig
+		// TODO: switch to real measurement tag config once we have a suitable event log.
+		tagCfg := gmes.MeasurementTagConfig
+
+		switch event.MRIndex() {
+		case registerCfg.BMCFirmwareIdx:
+			if gmesEvent.Tag != tagCfg.BMCFirmware {
+				return nil, fmt.Errorf("unexpected measurement tag at event %d: %v", event.Num(), gmesEvent.Tag)
+			}
+			state.BmcFirmware = string(gmesEvent.Content)
+
+		case registerCfg.MBMIdx:
+			if gmesEvent.Tag != tagCfg.MBM {
+				return nil, fmt.Errorf("unexpected measurement tag at event %d: %v", event.Num(), gmesEvent.Tag)
+			}
+			state.Mbm = string(gmesEvent.Content)
+
+		case registerCfg.BIOSIdx:
+			if gmesEvent.Tag != tagCfg.BIOS {
+				return nil, fmt.Errorf("unexpected measurement tag at event %d: %v", event.Num(), gmesEvent.Tag)
+			}
+			state.Bios = string(gmesEvent.Content)
+
+		case registerCfg.HostKernelIdx:
+			if gmesEvent.Tag != tagCfg.HostKernel {
+				return nil, fmt.Errorf("unexpected measurement tag at event %d: %v", event.Num(), gmesEvent.Tag)
+			}
+			state.HostKernel = string(gmesEvent.Content)
+
+		default:
+			return nil, fmt.Errorf("unknown MR index: %d", event.MRIndex())
+		}
+	}
+
+	return state, nil
 }

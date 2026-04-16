@@ -220,3 +220,10 @@ message FirmwareLogState {
   LogType log_type = 9;
 }
 
+// The verified state of Google measurements on the machine.
+message GMESState {
+  string bmc_firmware = 1;
+  string bios = 2;
+  string host_kernel = 3;
+  string mbm = 4;
+}

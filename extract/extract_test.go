@@ -18,12 +18,17 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"math/big"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	gmes "github.com/google/go-eventlog/extract/gmes"
 	"github.com/google/go-eventlog/internal/testutil"
 	"github.com/google/go-eventlog/register"
 	"github.com/google/go-eventlog/tcg"
@@ -670,4 +675,182 @@ func decodeHex(hexStr string) []byte {
 		panic(err)
 	}
 	return bytes
+}
+
+func TestGMESState(t *testing.T) {
+	expectedState := &pb.GMESState{
+		Bios:        "TestBIOS",
+		Mbm:         "TestMBM",
+		BmcFirmware: "TestBMC",
+		HostKernel:  "TestKernel",
+	}
+
+	validEvents := []tcg.Event{
+		newGMESEvent(t, gmes.PCRConfig.BIOSIdx, gmes.MeasurementTagConfig.BIOS, expectedState.Bios),
+		newSeparatorEvent(t, gmes.PCRConfig.BIOSIdx),
+		newGMESEvent(t, gmes.PCRConfig.MBMIdx, gmes.MeasurementTagConfig.MBM, expectedState.Mbm),
+		newSeparatorEvent(t, gmes.PCRConfig.MBMIdx),
+		newGMESEvent(t, gmes.PCRConfig.BMCFirmwareIdx, gmes.MeasurementTagConfig.BMCFirmware, expectedState.BmcFirmware),
+		newSeparatorEvent(t, gmes.PCRConfig.BMCFirmwareIdx),
+		newGMESEvent(t, gmes.PCRConfig.HostKernelIdx, gmes.MeasurementTagConfig.HostKernel, expectedState.HostKernel),
+		newSeparatorEvent(t, gmes.PCRConfig.HostKernelIdx),
+	}
+
+	testcases := []struct {
+		name          string
+		events        []tcg.Event
+		expectedState *pb.GMESState
+	}{
+		{
+			name:          "valid events",
+			events:        validEvents,
+			expectedState: expectedState,
+		},
+		{
+			name:          "duplicate separator",
+			events:        append(validEvents, newSeparatorEvent(t, gmes.PCRConfig.HostKernelIdx)),
+			expectedState: nil, // Expect failure.
+		},
+		{
+			name:          "invalid tag",
+			events:        []tcg.Event{newGMESEvent(t, gmes.PCRConfig.BIOSIdx, 9999, "InvalidTag")},
+			expectedState: nil, // Expect failure.
+		},
+		{
+			name:          "event after separator ignored",
+			events:        append(validEvents, newGMESEvent(t, gmes.PCRConfig.HostKernelIdx, gmes.MeasurementTagConfig.HostKernel, "ModifiedKernel")),
+			expectedState: expectedState, // Should ignore the modified event after the separator.
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotState, err := GMESState(crypto.SHA256, getEventsFromLog(t, tc.events))
+
+			if (err != nil) != (tc.expectedState == nil) {
+				t.Fatalf("GMESState() error = %v, wantErr: %v", err, tc.expectedState == nil)
+			}
+
+			if tc.expectedState != nil && !cmp.Equal(gotState, tc.expectedState, cmpopts.IgnoreUnexported(pb.GMESState{})) {
+				t.Errorf("GMESState() = got %+v, want %+v", gotState, tc.expectedState)
+			}
+		})
+	}
+}
+
+// encodeGMESEventData packages content into the Google Measurement Event Structure
+// and wraps it in a TCG Tagged Event structure.
+func encodeGMESEventData(t *testing.T, tag uint32, content []byte) []byte {
+	t.Helper()
+	// Create GMES MeasurementEvent data
+	gmesBuf := new(bytes.Buffer)
+	binary.Write(gmesBuf, binary.LittleEndian, uint32(1))            // Version
+	binary.Write(gmesBuf, binary.LittleEndian, tag)                  // Tag
+	binary.Write(gmesBuf, binary.LittleEndian, uint32(len(content))) // Size
+	gmesBuf.Write(content)
+	gmesData := gmesBuf.Bytes()
+
+	// Wrap in TCG_PCClientTaggedEventStruct
+	taggedBuf := new(bytes.Buffer)
+	binary.Write(taggedBuf, binary.LittleEndian, gmes.EventID)          // ID
+	binary.Write(taggedBuf, binary.LittleEndian, uint32(len(gmesData))) // DataLen
+	taggedBuf.Write(gmesData)
+
+	return taggedBuf.Bytes()
+}
+
+// newGMESEvent creates a tcg.Event containing a GMES measurement.
+func newGMESEvent(t *testing.T, mrIndex uint32, tag uint32, content string) tcg.Event {
+	t.Helper()
+	data := encodeGMESEventData(t, tag, []byte(content))
+	digest := sha256.Sum256(data)
+	return tcg.Event{
+		Index:  int(mrIndex),
+		Type:   tcg.EventTag,
+		Data:   data,
+		Digest: digest[:],
+	}
+}
+
+// newSeparatorEvent creates a tcg.Separator event for the given MR index.
+func newSeparatorEvent(t *testing.T, mrIndex uint32) tcg.Event {
+	t.Helper()
+	data := []byte{0, 0, 0, 0}
+	digest := sha256.Sum256(data)
+	return tcg.Event{
+		Index:  int(mrIndex),
+		Type:   tcg.Separator,
+		Data:   data,
+		Digest: digest[:],
+	}
+}
+
+// getEventsFromLog takes a slice of events and returns a slice of verified events
+// by building a synthetic raw event log and replaying it.
+func getEventsFromLog(t *testing.T, events []tcg.Event) []tcg.Event {
+	t.Helper()
+
+	buf := new(bytes.Buffer)
+	// Spec ID event (SHA1 format)
+	binary.Write(buf, binary.LittleEndian, uint32(0))    // PCRIndex
+	binary.Write(buf, binary.LittleEndian, uint32(0x03)) // Type: NoAction
+	binary.Write(buf, binary.LittleEndian, [20]byte{})   // Digest
+
+	specIDBuf := new(bytes.Buffer)
+	// "Spec ID Event03\0"
+	binary.Write(specIDBuf, binary.LittleEndian, [16]byte{0x53, 0x70, 0x65, 0x63, 0x20, 0x49, 0x44, 0x20, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x30, 0x33, 0x00})
+	binary.Write(specIDBuf, binary.LittleEndian, uint32(0))      // PlatformClass
+	binary.Write(specIDBuf, binary.LittleEndian, uint8(0))       // VersionMinor
+	binary.Write(specIDBuf, binary.LittleEndian, uint8(2))       // VersionMajor
+	binary.Write(specIDBuf, binary.LittleEndian, uint8(0))       // Errata
+	binary.Write(specIDBuf, binary.LittleEndian, uint8(8))       // UintnSize
+	binary.Write(specIDBuf, binary.LittleEndian, uint32(1))      // NumAlgs
+	binary.Write(specIDBuf, binary.LittleEndian, uint16(0x000B)) // SHA256 ID
+	binary.Write(specIDBuf, binary.LittleEndian, uint16(32))     // SHA256 Size
+	binary.Write(specIDBuf, binary.LittleEndian, uint8(0))       // VendorInfoSize
+
+	specIDData := specIDBuf.Bytes()
+	binary.Write(buf, binary.LittleEndian, uint32(len(specIDData)))
+	buf.Write(specIDData)
+
+	// Subsequent events (TPM 2.0 format)
+	for _, e := range events {
+		binary.Write(buf, binary.LittleEndian, uint32(e.Index))
+		binary.Write(buf, binary.LittleEndian, uint32(e.Type))
+		binary.Write(buf, binary.LittleEndian, uint32(1))      // NumDigests
+		binary.Write(buf, binary.LittleEndian, uint16(0x000B)) // SHA256
+		buf.Write(e.Digest)
+		binary.Write(buf, binary.LittleEndian, uint32(len(e.Data)))
+		buf.Write(e.Data)
+	}
+
+	rawLog := buf.Bytes()
+
+	// Calculate PCRs for replay.
+	pcrValues := make(map[int][]byte)
+	for _, e := range events {
+		h := sha256.New()
+		if current, ok := pcrValues[e.Index]; ok {
+			h.Write(current)
+		} else {
+			// First event for this PCR - initialize with zeros.
+			initial := make([]byte, h.Size())
+			h.Write(initial)
+		}
+		h.Write(e.Digest)
+		pcrValues[e.Index] = h.Sum(nil)
+	}
+
+	pcrMap := make(map[uint32][]byte)
+	for idx, val := range pcrValues {
+		pcrMap[uint32(idx)] = val[:]
+	}
+	bank := testutil.MakePCRBank(pb.HashAlgo_SHA256, pcrMap)
+
+	// Parse and Replay to get events.
+	replayedEvents, err := tcg.ParseAndReplay(rawLog, bank.MRs(), tcg.ParseOpts{})
+	if err != nil {
+		t.Fatalf("failed to parse synthetic log: %v", err)
+	}
+	return replayedEvents
 }
