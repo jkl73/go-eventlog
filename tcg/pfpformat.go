@@ -88,7 +88,7 @@ func (e Event) MRIndex() uint32 {
 func (e Event) UntrustedType() EventType {
 	tcgEvent := EventType(e.Type)
 	if _, ok := tcgEvent.KnownName(); !ok {
-		panic("library cannot convert between tpmeventlog EventType and tcg EventType for event " + e.UntrustedType().String())
+		panic("library cannot convert between tpmeventlog EventType and tcg EventType for event " + e.Type.String())
 	}
 	return tcgEvent
 }
