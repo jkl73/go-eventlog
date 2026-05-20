@@ -521,7 +521,6 @@ func GMESState(hash crypto.Hash, events []tcg.Event) (*pb.GMESState, error) {
 	state := &pb.GMESState{}
 	seenSeparators := map[uint32]bool{
 		gmes.PCRConfig.BMCFirmwareIdx: false,
-		gmes.PCRConfig.MBMIdx:         false,
 		gmes.PCRConfig.BIOSIdx:        false,
 		gmes.PCRConfig.HostKernelIdx:  false,
 	}
@@ -586,9 +585,6 @@ func GMESState(hash crypto.Hash, events []tcg.Event) (*pb.GMESState, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed parsing EFI image load at host kernel event %d: %v", event.Num(), err)
 			}
-
-		case registerCfg.MBMIdx:
-			continue
 
 		default:
 			return nil, fmt.Errorf("unknown MR index: %d", event.MRIndex())

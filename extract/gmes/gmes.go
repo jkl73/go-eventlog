@@ -25,7 +25,6 @@ const (
 
 type registerConfig struct {
 	BMCFirmwareIdx uint32
-	MBMIdx         uint32
 	BIOSIdx        uint32
 	HostKernelIdx  uint32
 }
@@ -33,7 +32,6 @@ type registerConfig struct {
 // PCRConfig configures the expected PCR indexes for GMES event logs.
 var PCRConfig = registerConfig{
 	BMCFirmwareIdx: 0,
-	MBMIdx:         11,
 	BIOSIdx:        17,
 	HostKernelIdx:  21,
 }

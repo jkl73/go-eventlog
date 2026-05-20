@@ -682,7 +682,6 @@ func TestGMESState(t *testing.T) {
 		newSeparatorEvent(t, gmes.PCRConfig.BMCFirmwareIdx),
 		newSeparatorEvent(t, gmes.PCRConfig.BIOSIdx),
 		newSeparatorEvent(t, gmes.PCRConfig.HostKernelIdx),
-		newSeparatorEvent(t, gmes.PCRConfig.MBMIdx),
 	}
 
 	bmcEvent := newEvent(t, gmes.PCRConfig.BMCFirmwareIdx, tcg.EFIHCRTMEvent, []byte(gmes.BMCData))
@@ -693,8 +692,6 @@ func TestGMESState(t *testing.T) {
 		bmcEvent,
 		biosEvent,
 		kernelEvent,
-		// MBM data is not captured in GMESState but we should ensure it's handled correctly.
-		newEvent(t, gmes.PCRConfig.MBMIdx, tcg.EventTag, []byte("please ignore me!")),
 	}, separatorEvents...)
 
 	// We need to ensure events are replayed correctly.
@@ -721,15 +718,12 @@ func TestGMESStateErrors(t *testing.T) {
 		newSeparatorEvent(t, gmes.PCRConfig.BMCFirmwareIdx),
 		newSeparatorEvent(t, gmes.PCRConfig.BIOSIdx),
 		newSeparatorEvent(t, gmes.PCRConfig.HostKernelIdx),
-		newSeparatorEvent(t, gmes.PCRConfig.MBMIdx),
 	}
 
 	validEvents := append([]tcg.Event{
 		newEvent(t, gmes.PCRConfig.BMCFirmwareIdx, tcg.EFIHCRTMEvent, []byte(gmes.BMCData)),
 		newEvent(t, gmes.PCRConfig.BIOSIdx, tcg.GoogleDRTMEvent, []byte(gmes.BIOSData)),
 		newEFIImageLoadEvent(t, gmes.PCRConfig.HostKernelIdx, 0x1000, 0x2000, 0x3000, []byte("test-dev-path")),
-		// MBM data is not captured in GMESState but we should ensure it's handled correctly.
-		newEvent(t, gmes.PCRConfig.MBMIdx, tcg.EventTag, []byte("please ignore me!")),
 	}, separatorEvents...)
 
 	testcases := []struct {
